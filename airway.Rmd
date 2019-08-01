@@ -1,0 +1,192 @@
+---
+title: Analysis of the airway dataset using Swish
+author: Michael Love
+date: 8/1/2019
+---
+
+In this short workflow, we will analyze the *airway* dataset using the
+Swish non-parametric method for differential expression. In particular
+we will look for DTE (differential transcript expression), in response
+to treatment with dexamethasone, controlling for differences at
+baseline across four donors. More information on the *airway* dataset
+can be found [here](http://bioconductor.org/packages/airway).
+
+To use Swish, one needs to have quantified RNA-seq reads, including
+the generation of inferential replicate counts, and then imported this
+data into R/Bioconductor. All the packages listed here (except
+`airway2`) can be installed from Bioconductor using, e.g.:
+
+```
+BiocManager::install(c("tximeta","fishpond"))
+```
+
+We have quantified the data using *Salmon* with 20 Gibbs samples that
+will serve as inferential replicates. We used *Snakemake* to run the
+jobs, and the exact Snakemake command that was used can be found here:
+
+<https://github.com/mikelove/airway2/blob/master/inst/extdata/Snakefile>
+
+Now we import the data into R/Bioconductor using *tximeta*. 
+
+If you want to follow along, the quantification files have been
+uploaded to GitHub in the following repository:
+
+<https://github.com/mikelove/airway2>
+
+So in our case the quantification files and a plaintext file with
+the information about the samples are located within the following
+directory. 
+
+```{r include=FALSE}
+knitr::opts_chunk$set(cache=TRUE)
+```	
+
+```{r}
+dir <- "airway2/inst/extdata"
+sra <- read.delim(file.path(dir,"SraRunTable.txt"))
+sra[1:3,]
+```
+
+The only step needed to run *tximeta* is to make a *data.frame* that
+has two or more columns. It must have a column `files` that points to
+the `quant.sf` files, and it must have a column `names` with the names
+for the samples. Additional columns will describe the samples
+(e.g. condition, batch, donor, etc.).
+
+```{r}
+files <- file.path(dir,"quants",sra$Run,"quant.sf")
+lvls <- c("Untreated", "Dexamethasone")
+coldata <- data.frame(
+  files=files,
+  names=sra$Run,
+  donor=sra$cell_line,
+  condition=factor(sra$treatment, lvls)
+)
+coldata[1:3,]
+```
+
+We need to load the following R packages for this script:
+
+```{r}
+library(tximeta)
+library(fishpond) # for the Swish method
+suppressPackageStartupMessages(library(SummarizedExperiment))
+```
+
+Now we load in the quantification data:
+
+```{r}
+se <- tximeta(coldata)
+```
+
+The following lines of code perform the Swish analysis on the
+transcript level. The `quiet=TRUE` is just to suppress the progress
+bar in the R output.
+
+```{r}
+y <- se
+y <- scaleInfReps(y, quiet=TRUE)
+y <- labelKeep(y)
+y <- y[ mcols(y)$keep, ]
+set.seed(1) # for reproducibility
+y <- swish(y,
+           x="condition", # the condition to compare
+           pair="donor", # within donor pairs
+           nperms=16, # default is 30 perms
+           quiet=TRUE)
+```
+
+Two special notes about the `swish` call above: 
+
+1. If we had two groups with no donor information, we would just leave
+   out the `pair` argument. If we had batches, we would use `cov`
+   instead of `pair` to denote the batch indicator.
+2. Here we have only `4^2 = 16` possible permutations. We will see this is
+   sufficient to detect many DE transcripts. The default is to use 30
+   permutations however (if `nperms` isn't specified).
+
+Now we can examine the p-value distribution. It's fairly important
+that a method have a "well-behaved" p-value distribution in order for
+the false discovery rate to be properly controlled by the p-value
+adjustment method. There is typically a set of features with very small
+or no changes which produce the uniform bars from 0 to 1, and then ---
+if there are features which are DE --- an enrichment of small p-values
+on the left side of the histogram. 
+
+```{r}
+hist(mcols(y)$pvalue, col="grey50", border="white")
+```
+
+It's useful to examine an MA plot, where the blue points indicate an
+FDR bound of 5%.
+
+```{r}
+plotMASwish(y)
+```
+
+We can tabulate the significant transcripts at 5% FDR by the sign of
+the log2 fold change:
+
+```{r}
+with(mcols(y),
+     table(sig=qvalue < .05, sign.lfc=sign(log2FC))
+     )
+```
+
+We create two rankings of the transcripts, the significant
+down-regulated transcripts (`lo`) and the significant up-regulated
+transcripts (`hi`), each ranked by the LFC. `order` ranks from small
+to large so for `lo` we multiply the LFC by an indicator if the
+transcript is significant. For `hi` we flip the sign and do the same:
+
+```{r}
+sig <- mcols(y)$qvalue < .05
+lo <- order(mcols(y)$log2FC * sig)
+hi <- order(-mcols(y)$log2FC * sig)
+```
+
+We can now use `lo` and `hi` to look at the top transcripts. If we
+want to restrict to only the significant ones, we can chop these
+rankings:
+
+```{r}
+lo <- head(lo, sum(sig & mcols(y)$log2FC < 0))
+hi <- head(hi, sum(sig & mcols(y)$log2FC > 0))
+```
+
+The top up-regulated and down-regulated transcripts can be plotted
+(with inferential replicate data shown as boxes in a boxplot):
+
+```{r}
+plotInfReps(y, idx=hi[1], x="condition", cov="donor", xaxis=FALSE)
+plotInfReps(y, idx=lo[1], x="condition", cov="donor", xaxis=FALSE)
+```
+
+(The `xaxis=FALSE` argument here suppresses the numbering of samples
+on the x-axis, which is more useful for when there are biological
+replicates.) 
+
+```{r}
+library(DESeq2)
+dds <- DESeqDataSet(se, ~donor + condition)
+dds <- dds[rownames(y),]
+dds <- DESeq(dds, fitType="local", quiet=TRUE)
+res <- results(dds)
+```
+
+```{r}
+table(deseq2=res$padj < .05, swish=sig)
+```
+
+```{r}
+plot(mcols(y)$qvalue, -log10(res$padj), ylim=c(0,30), cex=.3)
+idx <- which(res$padj < 1e-5 & mcols(y)$qvalue > .4)
+```
+
+```{r}
+par(mfrow=c(2,5))
+for (i in 1:5) 
+  plotInfReps(y, idx=idx[i], x="condition", cov="donor", xaxis=FALSE)
+for (i in 1:5) 
+  plotCounts(dds, gene=idx[i], "condition", transform=FALSE)
+```
