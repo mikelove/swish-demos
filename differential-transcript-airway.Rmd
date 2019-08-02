@@ -1,5 +1,5 @@
 ---
-title: Analysis of the airway dataset using Swish
+title: Differential transcript expresion using Swish on the airway dataset
 author: Michael Love
 date: 8/1/2019
 ---
@@ -19,6 +19,8 @@ data into R/Bioconductor. All the packages listed here (except
 ```
 BiocManager::install(c("tximeta","fishpond"))
 ```
+
+### tximeta to import quantification files
 
 We have quantified the data using *Salmon* with 20 Gibbs samples that
 will serve as inferential replicates. We used *Snakemake* to run the
@@ -79,9 +81,11 @@ Now we load in the quantification data:
 se <- tximeta(coldata)
 ```
 
-The following lines of code perform the Swish analysis on the
-transcript level. The `quiet=TRUE` is just to suppress the progress
-bar in the R output.
+### Running Swish to detect DTE
+
+The following lines perform the Swish analysis on the transcript
+level. The `quiet=TRUE` is just to suppress the progress bar in the R
+output. 
 
 ```{r}
 y <- se
@@ -117,15 +121,17 @@ on the left side of the histogram.
 hist(mcols(y)$pvalue, col="grey50", border="white")
 ```
 
-It's useful to examine an MA plot, where the blue points indicate an
-FDR bound of 5%.
+It's useful to examine an MA plot, where the blue points indicate a
+nominal FDR bound of 5%. For more details on annotating the MA plot
+with identifiers, see the 
+[Swish vignette](https://bioconductor.org/packages/release/bioc/vignettes/fishpond/inst/doc/fishpond.html).
 
 ```{r}
 plotMASwish(y)
 ```
 
-We can tabulate the significant transcripts at 5% FDR by the sign of
-the log2 fold change:
+We can tabulate the significant transcripts at a nominal 5% FDR by the
+sign of the log2 fold change:
 
 ```{r}
 with(mcols(y),
@@ -155,7 +161,10 @@ hi <- head(hi, sum(sig & mcols(y)$log2FC > 0))
 ```
 
 The top up-regulated and down-regulated transcripts can be plotted
-(with inferential replicate data shown as boxes in a boxplot):
+(with inferential replicate data shown as boxes in a boxplot). The
+orange boxes represent the dexamethasone treated samples, and the blue
+are the untreated. They are ordered by donor pair (alternating black
+and grey bars at the bottom of the plot):
 
 ```{r}
 plotInfReps(y, idx=hi[1], x="condition", cov="donor", xaxis=FALSE)
@@ -166,6 +175,22 @@ plotInfReps(y, idx=lo[1], x="condition", cov="donor", xaxis=FALSE)
 on the x-axis, which is more useful for when there are biological
 replicates.) 
 
+### Comparison with DESeq2 at transcript level
+
+In the [Swish paper](https://www.biorxiv.org/content/10.1101/561084v2),
+we find that for DTE, Swish outperforms other popular methods in terms
+of sensitivity while controlling FDR across transcripts, even those
+with high inferential uncertainty. DESeq2, which was designed for
+gene-level observed counts, tended to have too high FDR for those
+transcripts with high inferential uncertainty (which makes sense as
+this and other such methods do not make use of any information about
+inferential uncertainty coming from the quantification method).
+
+Here we also run DESeq2 and examine transcripts for which DESeq2 gives
+a very small adjusted p-value, while Swish does not. The equivalent
+DESeq2 design formula for the above `swish` call is `~donor +
+condition`: 
+
 ```{r}
 library(DESeq2)
 dds <- DESeqDataSet(se, ~donor + condition)
@@ -174,9 +199,17 @@ dds <- DESeq(dds, fitType="local", quiet=TRUE)
 res <- results(dds)
 ```
 
+We can compare the number of genes at the nominal 5% FDR threshold:
+
 ```{r}
 table(deseq2=res$padj < .05, swish=sig)
 ```
+
+DESeq2 is calling more than double of the number of transcripts that
+Swish is calling. We found that Swish had comparable power to
+parametric methods even at n=4 samples per group, so likely here the
+excess of calls from DESeq2 could be from transcripts with high
+inferential uncertainty.
 
 ```{r}
 plot(mcols(y)$qvalue, -log10(res$padj), ylim=c(0,30), cex=.3)
