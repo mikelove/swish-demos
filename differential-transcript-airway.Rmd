@@ -199,7 +199,7 @@ dds <- DESeq(dds, fitType="local", quiet=TRUE)
 res <- results(dds)
 ```
 
-We can compare the number of genes at the nominal 5% FDR threshold:
+We can compare the number of transcripts at the nominal 5% FDR threshold:
 
 ```{r}
 table(deseq2=res$padj < .05, swish=sig)
@@ -207,16 +207,28 @@ table(deseq2=res$padj < .05, swish=sig)
 
 DESeq2 is calling more than double of the number of transcripts that
 Swish is calling. We found that Swish had comparable power to
-parametric methods even at n=4 samples per group, so likely here the
-excess of calls from DESeq2 could be from transcripts with high
+parametric methods even at n=4 samples per group, so likely some of
+the excess of calls from DESeq2 could be from transcripts with high 
 inferential uncertainty.
 
 ```{r}
 plot(mcols(y)$qvalue, -log10(res$padj), ylim=c(0,30), cex=.3)
-idx <- which(res$padj < 1e-5 & mcols(y)$qvalue > .4)
+DESeq2.extra <- res$padj < 1e-2 & mcols(y)$qvalue > .2
+table(DESeq2.extra)
 ```
 
 ```{r}
+y <- computeInfRV(y)
+boxplot(log10(mcols(y)$meanInfRV) ~ DESeq2.extra)
+```
+
+If we look at 5 particular transcripts with very low adjusted p-value
+from DESeq2 and a high q-value from Swish, we see that the inferential
+replicates are helping to avoid calling these transcripts as
+significant: 
+
+```{r}
+idx <- which(res$padj < 1e-5 & mcols(y)$qvalue > .4)
 par(mfrow=c(2,5))
 for (i in 1:5) 
   plotInfReps(y, idx=idx[i], x="condition", cov="donor", xaxis=FALSE)
