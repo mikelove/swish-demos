@@ -1,1 +1,4 @@
 airway2
+*.html
+*_cache
+*_files
