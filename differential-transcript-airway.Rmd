@@ -1,5 +1,5 @@
 ---
-title: Differential transcript expresion using Swish on the airway dataset
+title: Differential transcript expression with Swish on the airway dataset
 author: Michael Love
 date: 8/1/2019
 ---
@@ -23,8 +23,11 @@ BiocManager::install(c("tximeta","fishpond"))
 ### tximeta to import quantification files
 
 We have quantified the data using *Salmon* with 20 Gibbs samples that
-will serve as inferential replicates. We used *Snakemake* to run the
-jobs, and the exact Snakemake command that was used can be found here:
+will serve as inferential replicates. The Gibbs samples were generated
+because we used the argument `--numGibbsSamples 20`.
+
+We used *Snakemake* to run the jobs, and the exact Snakemake command
+that was used can be found here: 
 
 <https://github.com/mikelove/airway2/blob/master/inst/extdata/Snakefile>
 
@@ -110,8 +113,12 @@ Two special notes about the `swish` call above:
    out the `pair` argument. If we had batches, we would use `cov`
    instead of `pair` to denote the batch indicator.
 2. Here we have only `4^2 = 16` possible permutations. We will see this is
-   sufficient to detect many DE transcripts. The default is to use 30
-   permutations however (if `nperms` isn't specified).
+   sufficient to detect many DE transcripts. If we had 3 paired
+   samples, it likely would not provide sufficient permutations to
+   detect DE transcripts. In general, the Swish default is to use 30 
+   permutations on paired or unpaired data (30 permutations are used
+   if `nperms` isn't specified, and this was the setting evaluated in
+   the Swish paper).
 
 Now we can examine the p-value distribution. It's fairly important
 that a method have a "well-behaved" p-value distribution in order for
@@ -145,9 +152,11 @@ with(mcols(y),
 
 We create two rankings of the transcripts, the significant
 down-regulated transcripts (`lo`) and the significant up-regulated
-transcripts (`hi`), each ranked by the LFC. `order` ranks from small
-to large so for `lo` we multiply the LFC by an indicator if the
-transcript is significant. For `hi` we flip the sign and do the same:
+transcripts (`hi`), each ranked by the LFC. We will create two vectors
+which give the _row number_ of the down- and up-regulated transcripts.
+The `order` function ranks from small to large so for `lo` we multiply
+the LFC by an indicator if the transcript is significant. For `hi` we
+flip the sign and do the same:
 
 ```{r}
 sig <- mcols(y)$qvalue < .05
@@ -157,7 +166,7 @@ hi <- order(-mcols(y)$log2FC * sig)
 
 We can now use `lo` and `hi` to look at the top transcripts. If we
 want to restrict to only the significant ones, we can chop these
-rankings:
+ranked row number vectors:
 
 ```{r}
 lo <- head(lo, sum(sig & mcols(y)$log2FC < 0))
@@ -165,10 +174,10 @@ hi <- head(hi, sum(sig & mcols(y)$log2FC > 0))
 ```
 
 The top up-regulated and down-regulated transcripts can be plotted
-(with inferential replicate data shown as boxes in a boxplot). The
+with inferential replicate data shown as boxes in a boxplot. The
 orange boxes represent the dexamethasone treated samples, and the blue
-are the untreated. They are ordered by donor pair (alternating black
-and grey bars at the bottom of the plot):
+are the untreated. They are grouped by donor pair (alternating black
+and grey bars at the bottom of the plot indicate pairs):
 
 ```{r}
 plotInfReps(y, idx=hi[1], x="condition", cov="donor", xaxis=FALSE)
@@ -177,18 +186,19 @@ plotInfReps(y, idx=lo[1], x="condition", cov="donor", xaxis=FALSE)
 
 (The `xaxis=FALSE` argument here suppresses the numbering of samples
 on the x-axis, which is more useful for when there are biological
-replicates.) 
+replicates.)
 
 ### Comparison with DESeq2 at transcript level
 
 In the [Swish paper](https://www.biorxiv.org/content/10.1101/561084v2),
 we find that for DTE, Swish outperforms other popular methods in terms
-of sensitivity while controlling FDR across transcripts, even those
-with high inferential uncertainty. DESeq2, which was designed for
-gene-level observed counts, tended to have too high FDR for those
-transcripts with high inferential uncertainty (which makes sense as
-this and other such methods do not make use of any information about
-inferential uncertainty coming from the quantification method).
+of sensitivity while controlling FDR across transcripts, even for
+those transcripts with high inferential uncertainty. DESeq2, which was
+designed for gene-level observed counts, tended to have too high FDR
+for those transcripts with high inferential uncertainty (which makes
+sense as this and other such methods do not make use of any
+information about inferential uncertainty coming from the
+quantification method).
 
 Here we also run DESeq2 and examine transcripts for which DESeq2 gives
 a very small adjusted p-value, while Swish does not. The equivalent
@@ -210,10 +220,11 @@ table(deseq2=res$padj < .05, swish=sig)
 ```
 
 DESeq2 is calling more than double of the number of transcripts that
-Swish is calling. We found that Swish had comparable power to
-parametric methods even at n=4 samples per group, so likely some of
-the excess of calls from DESeq2 could be from transcripts with high 
-inferential uncertainty.
+Swish is calling. There are also a minority of transcripts
+that Swish calls but not DESeq2. We found that Swish had comparable
+power to parametric methods even at n=4 samples per group, so likely
+some of the excess of calls from DESeq2 could be from transcripts with
+high inferential uncertainty.
 
 Another factor is that we only have 4 paired samples, and so Swish is
 likely calling only those transcripts in which all 4 paired samples
@@ -225,6 +236,10 @@ SAMseq method, which had the appropriate publication title
 differential expression in RNA-Seq data" --
 [Li and Tibshirani (2011)](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4605138/).
 
+We will now take a look at some of the outlier transcripts in the
+following plot, which have a very small adjusted p-value from DESeq2
+but a mid range q-value from Swish:
+
 ```{r}
 plot(mcols(y)$qvalue, -log10(res$padj), ylim=c(0,30),
      xlab="Swish q-value", ylab="DESeq2 -log10 adj p-value", cex=.3)
@@ -233,16 +248,21 @@ table(DESeq2.extra)
 ```
 
 To demonstrate that some extra calls from DESeq2 have elevated
-inferential uncertainty:
+inferential uncertainty, we compute the Inferential Relative Variance
+(InfRV) as defined in the Swish paper. It is defined as `(var -
+mean)/mean` over the inferential replicates for a given sample, with
+small parameters to keep the value positive and bounded for small
+`mean`. Below we plot the mean of InfRV over samples, then group the
+transcripts by whether they were in `DESeq2.extra`.
 
-```{r}
+```{r fig.width=3}
 y <- computeInfRV(y)
 with(mcols(y), boxplot(log10(meanInfRV) ~ DESeq2.extra, col="grey"))
 ```
 
 To demonstrate that some of the DESeq2 calls are for transcripts where
 not all the four pairs have consistent effects from treatment, we can
-construct the following tables:
+construct the following contingency tables:
 
 ```{r}
 n.cts <- counts(dds, normalized=TRUE)
@@ -260,7 +280,13 @@ happened to be the case, for this dataset.
 If we look at 5 particular transcripts with very low adjusted p-value
 from DESeq2 and a high q-value from Swish, we see that the inferential
 replicates are helping to avoid calling these transcripts as
-significant: 
+significant. These may represent cases where a transcript is not
+actually expressed, but instead the quantification method is not sure
+where to place the reads among this and other similar transcripts. At
+the least, we would need more samples with less uncertainty on the
+quantification (higher sequencing depth, more uniform coverage, longer
+reads) in order to be sure that these transcripts are truly DE, and
+not false positives for DESeq2.
 
 ```{r, fig.width=6, fig.height=14}
 idx <- which(res$padj < 1e-5 & mcols(y)$qvalue > .4)
@@ -271,8 +297,35 @@ for (i in 1:5) {
 }
 ```
 
+We can also examine some of the transcripts where Swish calls them as
+DE but DESeq2 does not. The general pattern seems to be that for one
+pair, the effect is much larger than for the other three pairs. For
+paired data, Swish focuses on the sign of the treatment effect, and
+whether this is stable across inferential replicates. So it is less
+sensitive to whether the log fold change is nearly the same across all 
+donors, and more sensitive to the direction of the effect and whether
+it is consistent across samples and inferential replicates.
+
+```{r, fig.width=6, fig.height=10}
+idx <- which(mcols(y)$qvalue < .05 & res$padj > .5)
+par(mfrow=c(3,2))
+for (i in 1:3) {
+  plotInfReps(y, idx=idx[i], x="condition", cov="donor", xaxis=FALSE)
+  plotCounts(dds, gene=idx[i], "condition", transform=FALSE)
+}
+```
+
+### More details
+
+For more details, consult the 
+[Swish vignette](https://bioconductor.org/packages/release/bioc/vignettes/fishpond/inst/doc/fishpond.html).
+as well as the help pages for individual functions in swish,
+e.g. `?swish`. You can also post questions to the 
+[Bioconductor support site](https://support.bioconductor.org),
+always making sure to post your code.
+
 ### Session info
 
 ```{r}
-devtools::session_info()
+sessionInfo()
 ```
