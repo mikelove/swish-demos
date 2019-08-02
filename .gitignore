@@ -1,4 +1,5 @@
 airway2
 *.html
+*.utf8.md
 *_cache
-*_files
+
