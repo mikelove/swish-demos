@@ -140,7 +140,7 @@ hist(mcols(y)$pvalue, col="grey50", border="white")
 It's useful to examine an MA plot, where the blue points indicate a
 nominal FDR bound of 5%. For more details on annotating the MA plot
 with identifiers, see the 
-[Swish vignette](https://bioconductor.org/packages/release/bioc/vignettes/fishpond/inst/doc/fishpond.html).
+[Swish vignette](https://bioconductor.org/packages/fishpond).
 
 ```{r}
 plotMASwish(y)
@@ -328,7 +328,7 @@ for (i in 1:3) {
 ### More details
 
 For more details, consult the 
-[Swish vignette](https://bioconductor.org/packages/release/bioc/vignettes/fishpond/inst/doc/fishpond.html).
+[Swish vignette](https://bioconductor.org/packages/fishpond).
 as well as the help pages for individual functions, e.g. `?swish`. You
 can also post questions to the  
 [Bioconductor support site](https://support.bioconductor.org),
