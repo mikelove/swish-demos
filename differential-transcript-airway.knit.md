@@ -9,7 +9,9 @@ Swish non-parametric method for differential expression. In particular
 we will look for DTE (differential transcript expression), in response
 to treatment with dexamethasone, controlling for differences at
 baseline across four donors. More information on the *airway* dataset
-can be found [here](http://bioconductor.org/packages/airway).
+can be found [here](http://bioconductor.org/packages/airway). The
+Swish method is described
+in [this paper](https://doi.org/10.1093/nar/gkz622). 
 
 To use Swish, one needs to have quantified RNA-seq reads, including
 the generation of inferential replicate counts, and then imported this
@@ -176,7 +178,7 @@ Two special notes about the `swish` call above:
 1. If we had two groups with no donor information, we would just leave
    out the `pair` argument. If we had batches, we would use `cov`
    instead of `pair` to denote the batch indicator.
-2. Here we have only `4^2 = 16` possible permutations. We will see this is
+2. Here we have only `2^4 = 16` possible permutations. We will see this is
    sufficient to detect many DE transcripts. If we had 3 paired
    samples, it likely would not provide sufficient permutations to
    detect DE transcripts. In general, the Swish default is to use 30 
@@ -184,13 +186,16 @@ Two special notes about the `swish` call above:
    if `nperms` isn't specified, and this was the setting evaluated in
    the Swish paper).
 
-Now we can examine the p-value distribution. It's fairly important
-that a method have a "well-behaved" p-value distribution in order for
-the false discovery rate to be properly controlled by the p-value
-adjustment method. There is typically a set of features with very small
-or no changes which produce the uniform bars from 0 to 1, and then ---
-if there are features which are DE --- an enrichment of small p-values
-on the left side of the histogram. 
+Now we can examine the p-value distribution. It's important that a
+method have a "well-behaved" p-value distribution in order for the
+false discovery rate to be properly controlled by the p-value
+adjustment method (necessary but not sufficient). Given that a dataset
+has a mix of some features with small or no changes across condition,
+and some features with changes that can be estimated with relative
+precision, the set of features with small or no changes will produce
+uniform bars from 0 to 1, and then --- if there are features which are
+DE --- we should also see an enrichment of small p-values on the left
+side of the histogram.
 
 
 ```r
@@ -256,8 +261,10 @@ hi <- head(hi, sum(sig & mcols(y)$log2FC > 0))
 The top up-regulated and down-regulated transcripts can be plotted
 with inferential replicate data shown as boxes in a boxplot. The
 orange boxes represent the dexamethasone treated samples, and the blue
-are the untreated. They are grouped by donor pair (alternating black
-and grey bars at the bottom of the plot indicate pairs):
+are the untreated. Again the boxes show the range of the inferential
+replicates for each sample for this transcript. They are grouped by
+donor pair (alternating black and grey bars at the bottom of the plot
+indicate pairs): 
 
 
 ```r
@@ -273,20 +280,20 @@ plotInfReps(y, idx=lo[1], x="condition", cov="donor", xaxis=FALSE)
 <img src="differential-transcript-airway_files/figure-html/unnamed-chunk-12-2.png" width="672" />
 
 (The `xaxis=FALSE` argument here suppresses the numbering of samples
-on the x-axis, which is more useful for when there are biological
-replicates.)
+on the x-axis, the numbers being more useful for when there are
+biological replicates.)
 
 ### Comparison with DESeq2 at transcript level
 
-In the [Swish paper](https://www.biorxiv.org/content/10.1101/561084v2),
-we find that for DTE, Swish outperforms other popular methods in terms
-of sensitivity while controlling FDR across transcripts, even for
-those transcripts with high inferential uncertainty. DESeq2, which was
-designed for gene-level observed counts, tended to have too high FDR
-for those transcripts with high inferential uncertainty (which makes
-sense as this and other such methods do not make use of any
-information about inferential uncertainty coming from the
-quantification method).
+In the [Swish paper](https://doi.org/10.1093/nar/gkz622), we find that
+for DTE, across a range of sample sizes from n=4 to n=20 per group,
+Swish outperforms other popular methods in terms of sensitivity while
+controlling FDR across transcripts, even for those transcripts with
+high inferential uncertainty. DESeq2, which was designed for
+gene-level observed counts, tended to have too high FDR for those
+transcripts with high inferential uncertainty (which makes sense as
+this and other such methods do not make use of any information about
+inferential uncertainty coming from the quantification method).
 
 Here we also run DESeq2 and examine transcripts for which DESeq2 gives
 a very small adjusted p-value, while Swish does not. The equivalent
@@ -323,7 +330,7 @@ table(deseq2=res$padj < .05, swish=sig)
 ##   TRUE   3246  2713
 ```
 
-DESeq2 is calling more than double of the number of transcripts that
+DESeq2 is calling more than double the number of transcripts that
 Swish is calling. There are also a minority of transcripts
 that Swish calls but not DESeq2. We found that Swish had comparable
 power to parametric methods even at n=4 samples per group, so likely
@@ -332,7 +339,7 @@ high inferential uncertainty.
 
 Another factor is that we only have 4 paired samples, and so Swish is
 likely calling only those transcripts in which all 4 paired samples
-demonstrated a consistent change upon treatment, whereas DESeq2 may
+demonstrated a _consistent_ change upon treatment, whereas DESeq2 may
 call some transcripts with large changes in a subset of the 4 pairs,
 and small or no change for the other pairs. Swish is based on the
 SAMseq method, which had the appropriate publication title 
@@ -367,7 +374,7 @@ To demonstrate that some extra calls from DESeq2 have elevated
 inferential uncertainty, we compute the Inferential Relative Variance
 (InfRV) as defined in the Swish paper. It is defined as `(var -
 mean)/mean` over the inferential replicates for a given sample, with
-small parameters to keep the value positive and bounded for small
+some parameters to keep the value positive and bounded for small
 `mean`. Below we plot the mean of InfRV over samples, then group the
 transcripts by whether they were in `DESeq2.extra`.
 
@@ -380,8 +387,11 @@ with(mcols(y), boxplot(log10(meanInfRV) ~ DESeq2.extra, col="grey"))
 <img src="differential-transcript-airway_files/figure-html/unnamed-chunk-16-1.png" width="288" />
 
 To demonstrate that some of the DESeq2 calls are for transcripts where
-not all the four pairs have consistent effects from treatment, we can
-construct the following contingency tables:
+not all the 4 pairs have consistent effects from treatment, we can
+construct the following contingency tables, showing that all of the
+Swish calls have all 4 pairs in the same direction according to a
+simple calculation of LFC, however DESeq2 has ~500 DTE calls which do
+not have consistent sign of LFC across the 4 pairs.
 
 
 ```r
@@ -462,8 +472,8 @@ for (i in 1:3) {
 
 For more details, consult the 
 [Swish vignette](https://bioconductor.org/packages/release/bioc/vignettes/fishpond/inst/doc/fishpond.html).
-as well as the help pages for individual functions in swish,
-e.g. `?swish`. You can also post questions to the 
+as well as the help pages for individual functions, e.g. `?swish`. You
+can also post questions to the  
 [Bioconductor support site](https://support.bioconductor.org),
 always making sure to post your code.
 
